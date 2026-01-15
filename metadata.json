@@ -1,0 +1,5 @@
+{
+  "name": "Minimalist Course Reader",
+  "description": "A clean, Notion-style interactive e-book and course viewer with nested navigation and rich content support.",
+  "requestFramePermissions": []
+}
