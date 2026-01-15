@@ -28,16 +28,45 @@ const App: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{type: 'success' | 'error', text: string} | null>(null);
 
+  // Load data from Supabase
+  const initialLoad = async () => {
+    // Si les clés ne sont pas configurées, on garde les données locales pour éviter le crash
+    if (SUPABASE_URL.includes("VOTRE_URL") || !SUPABASE_KEY) {
+        console.warn("Supabase non configuré dans le code source.");
+        return;
+    }
+
+    // Note: isLoading is already true when called from handleLogin
+    try {
+        const client = getSupabaseClient(SUPABASE_URL, SUPABASE_KEY);
+        const result = await loadLatestCourse(client);
+        if (result && result.data) {
+            setData(result.data);
+            setCurrentCloudId(result.id);
+        }
+    } catch (error) {
+        console.error("Erreur chargement:", error);
+        // On reste sur les données par défaut si erreur, ou on pourrait vider data
+    } finally {
+        setIsLoading(false);
+    }
+  };
+
   // --- Authentication Handler ---
   const handleLogin = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     
+    const startSession = async (mode: 'public' | 'admin') => {
+        setIsLoading(true); // Active le loader AVANT de changer d'écran
+        setAuthMode(mode);
+        // On attend que les données soient chargées avant d'enlever le loader (via le finally de initialLoad)
+        await initialLoad(); 
+    };
+
     if (inputCode === 'MICHEL10') {
-        setAuthMode('public');
-        await initialLoad();
+        await startSession('public');
     } else if (inputCode === 'KALIM2026') {
-        setAuthMode('admin');
-        await initialLoad();
+        await startSession('admin');
     } else {
         setAuthError(true);
         setTimeout(() => setAuthError(false), 2000);
@@ -69,30 +98,6 @@ const App: React.FC = () => {
     setData(next);
     setFuture(newFuture);
   }, [future, data]);
-
-  // Load data from Supabase immediately after login
-  const initialLoad = async () => {
-    // Si les clés ne sont pas configurées, on garde les données locales pour éviter le crash
-    if (SUPABASE_URL.includes("VOTRE_URL") || !SUPABASE_KEY) {
-        console.warn("Supabase non configuré dans le code source.");
-        return;
-    }
-
-    setIsLoading(true);
-    try {
-        const client = getSupabaseClient(SUPABASE_URL, SUPABASE_KEY);
-        const result = await loadLatestCourse(client);
-        if (result && result.data) {
-            setData(result.data);
-            setCurrentCloudId(result.id);
-        }
-    } catch (error) {
-        console.error("Erreur chargement:", error);
-        // On reste sur les données par défaut si erreur
-    } finally {
-        setIsLoading(false);
-    }
-  };
 
   const handleSave = async () => {
     if (SUPABASE_URL.includes("VOTRE_URL") || !SUPABASE_KEY) {
@@ -140,7 +145,7 @@ const App: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isEditing, undo, redo, authMode, data]); // Add data dependency for save
+  }, [isEditing, undo, redo, authMode, data]);
 
   // --- Handlers for Content ---
 
@@ -195,10 +200,23 @@ const App: React.FC = () => {
                           type="submit"
                           className="w-full py-4 bg-gray-900 text-white rounded-xl font-semibold hover:bg-black transition-colors flex items-center justify-center gap-2"
                       >
-                          <LogIn size={20} />
+                          {isLoading ? <Loader2 size={20} className="animate-spin" /> : <LogIn size={20} />}
                           Entrer
                       </button>
                   </form>
+              </div>
+          </div>
+      );
+  }
+
+  // --- VIEW: LOADING SCREEN (NEW) ---
+  // Affiche un écran de chargement épuré si on est authentifié mais que les données chargent encore
+  if (isLoading) {
+      return (
+          <div className="min-h-screen w-full flex flex-col items-center justify-center bg-white animate-fadeIn">
+              <div className="flex flex-col items-center gap-4">
+                  <Loader2 size={40} className="text-gray-900 animate-spin" strokeWidth={1.5} />
+                  <p className="text-gray-400 text-sm font-light tracking-widest uppercase">Chargement du cours...</p>
               </div>
           </div>
       );
