@@ -1,6 +1,7 @@
+
 import React, { useState, useRef } from 'react';
 import { CourseNode, ContentBlock, ContentType } from '../types';
-import { Plus, Minus, FileText, Trash2, MoreVertical, Type, Image, Video, Link as LinkIcon, Smile } from 'lucide-react';
+import { Plus, Minus, FileText, Trash2, MoreVertical, Type, Image, Video, Link as LinkIcon, Smile, HelpCircle } from 'lucide-react';
 import { ContentRenderer } from './ContentRenderer';
 
 interface AccordionNodeProps {
@@ -9,9 +10,10 @@ interface AccordionNodeProps {
   isEditing: boolean;
   onChange: (updatedNode: CourseNode) => void;
   onDelete: () => void;
+  onUpload?: (file: File) => Promise<string>;
 }
 
-export const AccordionNode: React.FC<AccordionNodeProps> = ({ node, depth = 0, isEditing, onChange, onDelete }) => {
+export const AccordionNode: React.FC<AccordionNodeProps> = ({ node, depth = 0, isEditing, onChange, onDelete, onUpload }) => {
   const [isOpen, setIsOpen] = useState(false);
   const nodeRef = useRef<HTMLDivElement>(null);
 
@@ -65,10 +67,14 @@ export const AccordionNode: React.FC<AccordionNodeProps> = ({ node, depth = 0, i
   };
 
   const addContentBlock = (type: ContentType) => {
+      let defaultValue = "";
+      if (type === 'text') defaultValue = "Nouveau texte...";
+      if (type === 'quiz') defaultValue = JSON.stringify({ question: "Nouvelle question ?", options: ["Choix 1", "Choix 2"], correctAnswer: 0 });
+
       const newBlock: ContentBlock = {
           id: Date.now().toString() + Math.random(),
           type,
-          value: type === 'text' ? "Nouveau texte..." : "",
+          value: defaultValue,
           caption: ""
       };
       const newContent = [...(node.content || []), newBlock];
@@ -198,7 +204,8 @@ export const AccordionNode: React.FC<AccordionNodeProps> = ({ node, depth = 0, i
             <ContentRenderer 
                 blocks={node.content || []} 
                 isEditing={isEditing} 
-                onUpdate={handleContentUpdate} 
+                onUpdate={handleContentUpdate}
+                onUpload={onUpload}
             />
 
             {/* Add Content Toolbar (Edit Mode) */}
@@ -217,6 +224,9 @@ export const AccordionNode: React.FC<AccordionNodeProps> = ({ node, depth = 0, i
                     <button onClick={() => addContentBlock('link')} className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium bg-gray-50 border border-gray-200 rounded hover:bg-gray-100 text-gray-700">
                         <LinkIcon size={14} /> Lien
                     </button>
+                     <button onClick={() => addContentBlock('quiz')} className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium bg-purple-50 border border-purple-200 rounded hover:bg-purple-100 text-purple-700">
+                        <HelpCircle size={14} /> Quiz
+                    </button>
                 </div>
             )}
         </div>
@@ -231,6 +241,7 @@ export const AccordionNode: React.FC<AccordionNodeProps> = ({ node, depth = 0, i
                 isEditing={isEditing}
                 onChange={handleChildUpdate}
                 onDelete={() => handleChildDelete(child.id)}
+                onUpload={onUpload}
             />
         ))}
         </div>

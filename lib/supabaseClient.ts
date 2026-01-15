@@ -1,3 +1,4 @@
+
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { CourseData } from '../types';
 
@@ -8,6 +9,23 @@ export const getSupabaseClient = (url: string, key: string) => {
     supabase = createClient(url, key);
   }
   return supabase;
+};
+
+// Upload file to 'media' bucket
+export const uploadFile = async (client: SupabaseClient, file: File): Promise<string> => {
+    const fileExt = file.name.split('.').pop();
+    const fileName = `${Math.random().toString(36).substring(2)}_${Date.now()}.${fileExt}`;
+    const filePath = `${fileName}`;
+
+    const { error: uploadError } = await client
+      .storage
+      .from('media') // Assurez-vous d'avoir créé ce bucket "public" dans Supabase
+      .upload(filePath, file);
+
+    if (uploadError) throw uploadError;
+
+    const { data } = client.storage.from('media').getPublicUrl(filePath);
+    return data.publicUrl;
 };
 
 // Save course to Supabase

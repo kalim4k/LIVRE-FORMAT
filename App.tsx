@@ -3,7 +3,7 @@ import { INITIAL_COURSE_DATA } from './constants';
 import { AccordionNode } from './components/AccordionNode';
 import { BookOpen, Edit3, Eye, Plus, Undo2, Redo2, Save, Loader2, Lock, LogIn } from 'lucide-react';
 import { CourseData, CourseNode } from './types';
-import { getSupabaseClient, saveCourseToCloud, loadLatestCourse } from './lib/supabaseClient';
+import { getSupabaseClient, saveCourseToCloud, loadLatestCourse, uploadFile } from './lib/supabaseClient';
 
 // --- CONFIGURATION SUPABASE ---
 // Remplacez ces valeurs par celles de votre projet Supabase
@@ -30,26 +30,39 @@ const App: React.FC = () => {
 
   // Load data from Supabase
   const initialLoad = async () => {
-    // Si les clés ne sont pas configurées, on garde les données locales pour éviter le crash
-    if (SUPABASE_URL.includes("VOTRE_URL") || !SUPABASE_KEY) {
-        console.warn("Supabase non configuré dans le code source.");
-        return;
+    let cloudLoaded = false;
+
+    // 1. Try Loading from Cloud
+    if (!SUPABASE_URL.includes("VOTRE_URL") && SUPABASE_KEY) {
+        try {
+            const client = getSupabaseClient(SUPABASE_URL, SUPABASE_KEY);
+            const result = await loadLatestCourse(client);
+            if (result && result.data) {
+                setData(result.data);
+                setCurrentCloudId(result.id);
+                cloudLoaded = true;
+            }
+        } catch (error) {
+            console.error("Erreur chargement cloud:", error);
+            // Don't show error to user on load, just fallback silently
+        }
     }
 
-    // Note: isLoading is already true when called from handleLogin
-    try {
-        const client = getSupabaseClient(SUPABASE_URL, SUPABASE_KEY);
-        const result = await loadLatestCourse(client);
-        if (result && result.data) {
-            setData(result.data);
-            setCurrentCloudId(result.id);
+    // 2. If Cloud failed or empty, try Local Storage
+    if (!cloudLoaded) {
+        const localBackup = localStorage.getItem('course_data_backup');
+        if (localBackup) {
+            try {
+                const parsed = JSON.parse(localBackup);
+                setData(parsed);
+                console.log("Loaded from local backup");
+            } catch (e) {
+                console.error("Local backup corrupted");
+            }
         }
-    } catch (error) {
-        console.error("Erreur chargement:", error);
-        // On reste sur les données par défaut si erreur, ou on pourrait vider data
-    } finally {
-        setIsLoading(false);
     }
+
+    setIsLoading(false);
   };
 
   // --- Authentication Handler ---
@@ -100,8 +113,15 @@ const App: React.FC = () => {
   }, [future, data]);
 
   const handleSave = async () => {
+    // 1. Always save to LocalStorage as backup
+    try {
+        localStorage.setItem('course_data_backup', JSON.stringify(data));
+    } catch (e) {
+        console.warn("Local storage write failed");
+    }
+
     if (SUPABASE_URL.includes("VOTRE_URL") || !SUPABASE_KEY) {
-        setStatusMessage({ type: 'error', text: 'Clés Supabase manquantes dans le code !' });
+        setStatusMessage({ type: 'success', text: 'Sauvegardé localement (Supabase non configuré)' });
         return;
     }
 
@@ -110,14 +130,32 @@ const App: React.FC = () => {
         const client = getSupabaseClient(SUPABASE_URL, SUPABASE_KEY);
         const result = await saveCourseToCloud(client, data, currentCloudId || undefined);
         setCurrentCloudId(result.id);
-        setStatusMessage({ type: 'success', text: 'Modifications enregistrées !' });
-        // Reset history after save? Optional. Keeping it allows undoing past the save point.
+        setStatusMessage({ type: 'success', text: 'Modifications enregistrées sur le Cloud !' });
     } catch (error: any) {
         console.error(error);
-        setStatusMessage({ type: 'error', text: 'Erreur sauvegarde: ' + error.message });
+        if (error.message?.includes('row-level security') || error.message?.includes('policy')) {
+             setStatusMessage({ type: 'error', text: 'Sauvegardé localement (Cloud bloqué par RLS)' });
+        } else {
+             setStatusMessage({ type: 'error', text: 'Sauvegardé localement (Erreur Cloud: ' + error.message + ')' });
+        }
     } finally {
         setIsLoading(false);
-        setTimeout(() => setStatusMessage(null), 3000);
+        setTimeout(() => setStatusMessage(null), 4000);
+    }
+  };
+
+  const handleUpload = async (file: File): Promise<string> => {
+     if (SUPABASE_URL.includes("VOTRE_URL") || !SUPABASE_KEY) {
+        throw new Error("Supabase config missing");
+    }
+    try {
+        const client = getSupabaseClient(SUPABASE_URL, SUPABASE_KEY);
+        return await uploadFile(client, file);
+    } catch (error: any) {
+        if (error.message?.includes('row-level security') || error.message?.includes('policy')) {
+             throw new Error("Upload bloqué. Vérifiez les politiques RLS du Storage Supabase.");
+        }
+        throw error;
     }
   };
 
@@ -210,7 +248,6 @@ const App: React.FC = () => {
   }
 
   // --- VIEW: LOADING SCREEN (NEW) ---
-  // Affiche un écran de chargement épuré si on est authentifié mais que les données chargent encore
   if (isLoading) {
       return (
           <div className="min-h-screen w-full flex flex-col items-center justify-center bg-white animate-fadeIn">
@@ -229,7 +266,7 @@ const App: React.FC = () => {
       {/* Toast Notification */}
       {statusMessage && (
           <div className={`fixed top-20 right-6 z-[60] px-4 py-3 rounded-lg shadow-xl text-sm font-medium animate-fadeIn ${
-              statusMessage.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'
+              statusMessage.type.includes('success') ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-red-50 text-red-700 border border-red-200'
           }`}>
               {statusMessage.text}
           </div>
@@ -349,6 +386,7 @@ const App: React.FC = () => {
                 isEditing={isEditing}
                 onChange={handleUpdateNode}
                 onDelete={() => handleDeleteNode(node.id)}
+                onUpload={handleUpload}
             />
           ))}
 
