@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { ContentBlock, QuizData } from '../types';
-import { ExternalLink, Image as ImageIcon, PlayCircle, Trash2, Upload, CheckCircle2, XCircle, HelpCircle, Plus, X, EyeOff, Bold, Italic } from 'lucide-react';
+import { ExternalLink, Image as ImageIcon, PlayCircle, Trash2, Upload, CheckCircle2, XCircle, HelpCircle, Plus, X, EyeOff, Bold, Italic, AlertCircle, Play } from 'lucide-react';
 
 interface ContentRendererProps {
   blocks: ContentBlock[];
@@ -9,6 +9,18 @@ interface ContentRendererProps {
   onUpdate: (newBlocks: ContentBlock[]) => void;
   onUpload?: (file: File) => Promise<string>;
 }
+
+// Helper pour extraire l'ID YouTube
+const getYouTubeId = (url: string): string | null => {
+  if (!url) return null;
+  const cleanUrl = url.trim();
+  const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=|shorts\/)([^#&?]*).*/;
+  const match = cleanUrl.match(regExp);
+  if (match && match[2]) {
+    return match[2].length === 11 ? match[2] : null;
+  }
+  return null;
+};
 
 export const ContentRenderer: React.FC<ContentRendererProps> = ({ blocks, isEditing, onUpdate, onUpload }) => {
   if (!blocks || blocks.length === 0) return null;
@@ -55,12 +67,10 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ blocks, isEdit
     const range = selection.getRangeAt(0);
     const rect = range.getBoundingClientRect();
 
-    // Only show if selection is non-empty and inside our editor
     if (rect.width > 0) {
-        // Calculate position relative to viewport, we will use fixed positioning for the toolbar
         setToolbarPosition({
-            top: rect.top - 40, // 40px above the text
-            left: rect.left + (rect.width / 2) // Centered
+            top: rect.top - 40,
+            left: rect.left + (rect.width / 2)
         });
         setCurrentSelectionRange(range);
         setActiveBlockId(blockId);
@@ -78,33 +88,19 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ blocks, isEdit
       selection?.addRange(currentSelectionRange);
 
       if (formatType === 'spoiler') {
-          // Custom handling for spoiler span
           const span = document.createElement('span');
           span.className = 'spoiler';
           span.title = 'Cliquez pour révéler';
           try {
             currentSelectionRange.surroundContents(span);
           } catch (e) {
-             // Fallback if selection crosses nodes: simple execCommand (won't do class)
-             // Or complex parsing. For MVP, we stick to safe ranges.
-             console.warn("Cannot apply spoiler across complex nodes. Try selecting text within a single paragraph.");
-             alert("Veuillez sélectionner du texte continu (sans traverser d'autres styles) pour appliquer le flou.");
+             alert("Veuillez sélectionner du texte continu pour appliquer le flou.");
              return;
           }
       } else {
-          // Standard browser commands for bold/italic
           document.execCommand(formatType);
       }
       
-      // Update the state with new HTML
-      // Find the editable element to get its new HTML
-      // We rely on the fact that 'surroundContents' modifies the DOM directly.
-      // We need to trigger the 'onChange' of the parent block.
-      // A trick is to find the element by ID or context, but here we can just hide toolbar
-      // and let the user click away (blur) or type to trigger the existing onBlur/Input listeners.
-      // Better: force a manual update if possible, but the onBlur of the contentEditable will handle it.
-      
-      // To ensure React state is updated immediately:
       const activeEl = document.activeElement;
       if (activeEl && activeEl.innerHTML) {
           handleChange(activeBlockId, 'value', activeEl.innerHTML);
@@ -114,7 +110,6 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ blocks, isEdit
       window.getSelection()?.removeAllRanges();
   };
 
-  // Handle revealing spoilers in View Mode (Event Delegation)
   const handleContainerClick = (e: React.MouseEvent) => {
       const target = e.target as HTMLElement;
       if (target.classList.contains('spoiler')) {
@@ -130,7 +125,7 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ blocks, isEdit
           <div 
             className="fixed z-50 flex items-center gap-1 p-1 bg-gray-900 text-white rounded-lg shadow-xl animate-fadeIn transform -translate-x-1/2"
             style={{ top: toolbarPosition.top, left: toolbarPosition.left }}
-            onMouseDown={(e) => e.preventDefault()} // Prevent losing focus on text
+            onMouseDown={(e) => e.preventDefault()}
           >
               <button onClick={() => applyFormat('bold')} className="p-1.5 hover:bg-gray-700 rounded transition-colors" title="Gras">
                   <Bold size={14} />
@@ -160,7 +155,6 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ blocks, isEdit
             </button>
           )}
 
-          {/* Render based on type */}
           {(() => {
             switch (block.type) {
               case 'text':
@@ -237,6 +231,9 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ blocks, isEdit
                 );
 
               case 'video':
+                 const youtubeId = getYouTubeId(block.value);
+                 const isNativeVideo = block.value.includes('.mp4') || block.value.includes('supabase') || block.value.includes('blob:');
+                 
                  return (
                   <div className="my-6">
                     {isEditing ? (
@@ -246,7 +243,7 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ blocks, isEdit
                                 type="text" 
                                 value={block.value}
                                 onChange={(e) => handleChange(block.id, 'value', e.target.value)}
-                                placeholder="URL Vidéo (YouTube, .mp4...)"
+                                placeholder="Lien YouTube ou URL .mp4"
                                 className="text-sm p-2 border border-gray-200 rounded focus:border-blue-500 outline-none w-full"
                              />
                              {onUpload && (
@@ -267,24 +264,61 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ blocks, isEdit
                     ) : null}
 
                     {block.value && (
-                      <div className="relative w-full aspect-video rounded-md overflow-hidden bg-black shadow-sm">
-                        {block.value.includes('.mp4') || block.value.includes('supabase') ? (
+                      <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black shadow-sm border border-gray-100">
+                        {isNativeVideo ? (
                             <video 
                                 src={block.value} 
                                 controls 
                                 className="absolute top-0 left-0 w-full h-full"
                             />
+                        ) : youtubeId ? (
+                            <a
+                                href={block.value}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="group block w-full h-full relative cursor-pointer"
+                            >
+                                {/* Thumbnail */}
+                                <img
+                                    src={`https://img.youtube.com/vi/${youtubeId}/maxresdefault.jpg`}
+                                    alt="Video Thumbnail"
+                                    className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
+                                    onError={(e) => {
+                                        // Fallback si maxres n'existe pas
+                                        e.currentTarget.src = `https://img.youtube.com/vi/${youtubeId}/hqdefault.jpg`;
+                                    }}
+                                />
+                                
+                                {/* Overlay */}
+                                <div className="absolute inset-0 bg-black/20 group-hover:bg-black/40 transition-colors duration-300" />
+                                
+                                {/* Play Button UI */}
+                                <div className="absolute inset-0 flex flex-col items-center justify-center text-white">
+                                    <div className="w-16 h-16 flex items-center justify-center bg-white/20 backdrop-blur-md rounded-full mb-3 group-hover:scale-110 transition-transform duration-300 shadow-lg border border-white/30">
+                                        <Play size={28} fill="currentColor" className="text-white ml-1" />
+                                    </div>
+                                    <span className="text-sm font-medium tracking-wide flex items-center gap-1.5 opacity-90 px-3 py-1 rounded-full bg-black/30 backdrop-blur-sm">
+                                        Regarder sur YouTube <ExternalLink size={12} />
+                                    </span>
+                                </div>
+                            </a>
                         ) : (
-                            <iframe
-                            src={block.value}
-                            title="Video content"
-                            className="absolute top-0 left-0 w-full h-full"
-                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                            allowFullScreen
-                            />
+                            <div className="absolute top-0 left-0 w-full h-full flex flex-col items-center justify-center bg-gray-100 text-gray-500 text-center p-6 border border-gray-200">
+                                <AlertCircle size={32} className="mb-2 text-gray-400" />
+                                <p className="font-medium text-gray-700">Vidéo non disponible</p>
+                                <a 
+                                    href={block.value} 
+                                    target="_blank" 
+                                    rel="noopener noreferrer"
+                                    className="px-4 py-2 mt-2 bg-white border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors text-gray-800"
+                                >
+                                    Ouvrir le lien
+                                </a>
+                            </div>
                         )}
                       </div>
                     )}
+
                     {!isEditing && block.caption && (
                       <div className="mt-2 text-xs md:text-sm text-gray-500 flex items-center gap-1.5">
                         <PlayCircle size={14} />
