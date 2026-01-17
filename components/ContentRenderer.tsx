@@ -1,7 +1,7 @@
 
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { ContentBlock, QuizData } from '../types';
-import { ExternalLink, Image as ImageIcon, PlayCircle, Trash2, Upload, CheckCircle2, XCircle, HelpCircle, Plus, X } from 'lucide-react';
+import { ExternalLink, Image as ImageIcon, PlayCircle, Trash2, Upload, CheckCircle2, XCircle, HelpCircle, Plus, X, EyeOff, Bold, Italic } from 'lucide-react';
 
 interface ContentRendererProps {
   blocks: ContentBlock[];
@@ -12,6 +12,12 @@ interface ContentRendererProps {
 
 export const ContentRenderer: React.FC<ContentRendererProps> = ({ blocks, isEditing, onUpdate, onUpload }) => {
   if (!blocks || blocks.length === 0) return null;
+
+  // State for the floating toolbar
+  const [toolbarVisible, setToolbarVisible] = useState(false);
+  const [toolbarPosition, setToolbarPosition] = useState({ top: 0, left: 0 });
+  const [currentSelectionRange, setCurrentSelectionRange] = useState<Range | null>(null);
+  const [activeBlockId, setActiveBlockId] = useState<string | null>(null);
 
   const handleChange = (id: string, field: keyof ContentBlock, newValue: string) => {
     const updated = blocks.map(b => b.id === id ? { ...b, [field]: newValue } : b);
@@ -35,8 +41,111 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ blocks, isEdit
       }
   };
 
+  // --- Logic for Text Selection & Floating Toolbar ---
+
+  const handleTextSelection = (e: React.MouseEvent | React.KeyUpEvent, blockId: string) => {
+    if (!isEditing) return;
+
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+        setToolbarVisible(false);
+        return;
+    }
+
+    const range = selection.getRangeAt(0);
+    const rect = range.getBoundingClientRect();
+
+    // Only show if selection is non-empty and inside our editor
+    if (rect.width > 0) {
+        // Calculate position relative to viewport, we will use fixed positioning for the toolbar
+        setToolbarPosition({
+            top: rect.top - 40, // 40px above the text
+            left: rect.left + (rect.width / 2) // Centered
+        });
+        setCurrentSelectionRange(range);
+        setActiveBlockId(blockId);
+        setToolbarVisible(true);
+    } else {
+        setToolbarVisible(false);
+    }
+  };
+
+  const applyFormat = (formatType: 'spoiler' | 'bold' | 'italic') => {
+      if (!currentSelectionRange || !activeBlockId) return;
+
+      const selection = window.getSelection();
+      selection?.removeAllRanges();
+      selection?.addRange(currentSelectionRange);
+
+      if (formatType === 'spoiler') {
+          // Custom handling for spoiler span
+          const span = document.createElement('span');
+          span.className = 'spoiler';
+          span.title = 'Cliquez pour révéler';
+          try {
+            currentSelectionRange.surroundContents(span);
+          } catch (e) {
+             // Fallback if selection crosses nodes: simple execCommand (won't do class)
+             // Or complex parsing. For MVP, we stick to safe ranges.
+             console.warn("Cannot apply spoiler across complex nodes. Try selecting text within a single paragraph.");
+             alert("Veuillez sélectionner du texte continu (sans traverser d'autres styles) pour appliquer le flou.");
+             return;
+          }
+      } else {
+          // Standard browser commands for bold/italic
+          document.execCommand(formatType);
+      }
+      
+      // Update the state with new HTML
+      // Find the editable element to get its new HTML
+      // We rely on the fact that 'surroundContents' modifies the DOM directly.
+      // We need to trigger the 'onChange' of the parent block.
+      // A trick is to find the element by ID or context, but here we can just hide toolbar
+      // and let the user click away (blur) or type to trigger the existing onBlur/Input listeners.
+      // Better: force a manual update if possible, but the onBlur of the contentEditable will handle it.
+      
+      // To ensure React state is updated immediately:
+      const activeEl = document.activeElement;
+      if (activeEl && activeEl.innerHTML) {
+          handleChange(activeBlockId, 'value', activeEl.innerHTML);
+      }
+
+      setToolbarVisible(false);
+      window.getSelection()?.removeAllRanges();
+  };
+
+  // Handle revealing spoilers in View Mode (Event Delegation)
+  const handleContainerClick = (e: React.MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.classList.contains('spoiler')) {
+          target.classList.toggle('revealed');
+      }
+  };
+
   return (
-    <div className="space-y-6 py-4 animate-fadeIn">
+    <div className="space-y-6 py-4 animate-fadeIn" onClick={handleContainerClick}>
+      
+      {/* Floating Toolbar */}
+      {toolbarVisible && isEditing && (
+          <div 
+            className="fixed z-50 flex items-center gap-1 p-1 bg-gray-900 text-white rounded-lg shadow-xl animate-fadeIn transform -translate-x-1/2"
+            style={{ top: toolbarPosition.top, left: toolbarPosition.left }}
+            onMouseDown={(e) => e.preventDefault()} // Prevent losing focus on text
+          >
+              <button onClick={() => applyFormat('bold')} className="p-1.5 hover:bg-gray-700 rounded transition-colors" title="Gras">
+                  <Bold size={14} />
+              </button>
+              <button onClick={() => applyFormat('italic')} className="p-1.5 hover:bg-gray-700 rounded transition-colors" title="Italique">
+                  <Italic size={14} />
+              </button>
+              <div className="w-px h-4 bg-gray-700 mx-1"></div>
+              <button onClick={() => applyFormat('spoiler')} className="p-1.5 hover:bg-gray-700 rounded transition-colors flex items-center gap-1" title="Flouter / Cacher">
+                  <EyeOff size={14} />
+                  <span className="text-xs font-medium">Flou</span>
+              </button>
+          </div>
+      )}
+
       {blocks.map((block) => (
         <div key={block.id} className={`relative group ${isEditing ? 'pl-8 border-l-2 border-dashed border-gray-200 hover:border-blue-300 transition-colors' : ''}`}>
           
@@ -55,18 +164,26 @@ export const ContentRenderer: React.FC<ContentRendererProps> = ({ blocks, isEdit
           {(() => {
             switch (block.type) {
               case 'text':
-                return isEditing ? (
-                  <textarea
-                    value={block.value}
-                    onChange={(e) => handleChange(block.id, 'value', e.target.value)}
-                    className="w-full bg-transparent text-base md:text-lg text-gray-700 font-light resize-none focus:outline-none focus:bg-gray-50 p-2 rounded"
-                    rows={Math.max(2, block.value.split('\n').length)}
-                    placeholder="Écrivez votre texte ici..."
-                  />
-                ) : (
-                  <p className="text-base md:text-lg leading-relaxed text-gray-700 font-light whitespace-pre-wrap">
-                    {block.value}
-                  </p>
+                return (
+                  <div className="w-full">
+                     {isEditing ? (
+                        <div
+                            className="w-full min-h-[3rem] p-3 rounded-lg border border-gray-200 focus:ring-2 focus:ring-blue-100 focus:border-blue-400 outline-none transition-all rich-text-content cursor-text bg-gray-50/50"
+                            contentEditable
+                            suppressContentEditableWarning={true}
+                            onBlur={(e) => handleChange(block.id, 'value', e.currentTarget.innerHTML)}
+                            onMouseUp={(e) => handleTextSelection(e, block.id)}
+                            onKeyUp={(e) => handleTextSelection(e, block.id)}
+                            dangerouslySetInnerHTML={{ __html: block.value }}
+                            style={{ whiteSpace: 'pre-wrap' }}
+                        />
+                     ) : (
+                        <div 
+                            className="text-base md:text-lg leading-relaxed text-gray-700 font-light rich-text-content"
+                            dangerouslySetInnerHTML={{ __html: block.value }}
+                        />
+                     )}
+                  </div>
                 );
 
               case 'image':
